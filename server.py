@@ -70,8 +70,9 @@ class MyServerResponse:
         tmp = self.response_header["expires"] + END_OF_LINE_RESPONSE
         conn.sendall(tmp.encode("utf-8"))
 
-        tmp = self.response_header["content_type"] + END_OF_LINE_RESPONSE
-        conn.sendall(tmp.encode("utf-8"))
+        if self.response_header["content_type"] != "default":
+            tmp = self.response_header["content_type"] + END_OF_LINE_RESPONSE
+            conn.sendall(tmp.encode("utf-8"))
 
         tmp = self.response_header["accept_ranges"] + END_OF_LINE_RESPONSE
         conn.sendall(tmp.encode("utf-8"))
@@ -158,6 +159,7 @@ class MyWebServer(socketserver.BaseRequestHandler):
             if file:
                 self.request.sendfile(file)
                 #pass
+            #error_handler(conn, status_c)
             self.request.sendall(b"\r\n")
             #conn.sendall(END_OF_LINE_RESPONSE.encode("utf-8"))
         self.request.close()
