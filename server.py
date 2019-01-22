@@ -4,6 +4,8 @@ import re
 import socket
 import datetime
 import os
+import mimetypes as MT
+import sys
 
 # Copyright 2013 Abram Hindle, Eddie Antonio Santos
 #
@@ -30,28 +32,15 @@ import os
 
 # try: curl -v -X GET http://127.0.0.1:8080/
 
-#################################################
-# 1, eat the request
-# 2, check the type of the request
-# 3, return status code 405 to unhandled method
-   # and return 200 for get
-# 4,
-#################################################
-
 STATUS_CODE_RESPONSE = {
     0: " 0 Surprise!",
-    200: " 200 OK"
+    200: " 200 OK",
+    404: " 404 Not Found",
+    405: " 405 METHOD NOT ALLOWED"
 }
 
 HTTP_REQUEST_METHODS = {
     "GET": 1,
-    "HEAD": 2,
-    "POST": 3,
-    "PUT": 4,
-    "DELETE": 5,
-    "CONNECT": 6,
-    "OPTIONS": 7,
-    "TRACE": 8,
 }
 
 END_OF_LINE_RESPONSE = "\r\n"
@@ -65,7 +54,7 @@ NOFILE = 3
 
 class MyServerResponse:
 
-    def __init__(self, status=0, expire_time="-1", content_type="", accept_ranges="none"):
+    def __init__(self, status=0, expire_time="-1", content_type="default", accept_ranges="none"):
         self.response_header = {
             "status_response": PROTOCOL_RESPONSE + STATUS_CODE_RESPONSE[status],
             "date_response": "Date: " + datetime.datetime.now().strftime('%A, %d %b %Y %X %Z'),
@@ -74,25 +63,18 @@ class MyServerResponse:
             "accept_ranges": "Accept-Ranges: " + accept_ranges
         }
 
-    def generate_header(self):
-        full_header = ""
-        """
-        for each in self.response_header:
-            if self.response_header[each] == "":
-                pass
-            elif self.response_header[each] == None:
-                pass
-            else:
-                #full_header += "< " + self.response_header[each] + END_OF_LINE_RESPONSE
-                pass
-        """
-        full_header += "< " + self.response_header["status_response"] + END_OF_LINE_RESPONSE
-        full_header += "< " + self.response_header["date_response"] + END_OF_LINE_RESPONSE
-        full_header += "< " + self.response_header["expires"] + END_OF_LINE_RESPONSE
-        full_header += "< " + self.response_header["content_type"] + END_OF_LINE_RESPONSE
-        full_header += "< " + self.response_header["accept_ranges"] + END_OF_LINE_RESPONSE
+    def send_header(self, conn):
+        tmp = self.response_header["status_response"] + END_OF_LINE_RESPONSE
+        conn.sendall(tmp.encode("utf-8"))
 
-        return full_header
+        tmp = self.response_header["expires"] + END_OF_LINE_RESPONSE
+        conn.sendall(tmp.encode("utf-8"))
+
+        tmp = self.response_header["content_type"] + END_OF_LINE_RESPONSE
+        conn.sendall(tmp.encode("utf-8"))
+
+        tmp = self.response_header["accept_ranges"] + END_OF_LINE_RESPONSE
+        conn.sendall(tmp.encode("utf-8"))
 
     def set_status_response(self, status_code):
         self.response_header["status_response"] = PROTOCOL_RESPONSE + STATUS_CODE_RESPONSE[status_code]
@@ -122,9 +104,16 @@ class MyWebServer(socketserver.BaseRequestHandler):
         rest_protocol_flag = False
         standard_rest_cmd = "GET / HTTP/1.1"
 
+        self.request.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         full_data = b""
         with self.request as conn:
             new_request = MyServerRequest()
+            status_code = 0
+            open_file = True
+            file = None
+            content_type = "void of magic"
+            file_name = "none"
+            type_of_file = "default"
 
             # recv all data
             while True:
@@ -133,62 +122,48 @@ class MyWebServer(socketserver.BaseRequestHandler):
                 full_data += data
                 if b"\r\n" in data:
                     break
-
-            # byte to string with the data we get
-            #print(full_data)
             str_full_data = full_data.decode("utf-8")
             splited_commands = re.split('[\r|\n]+', str_full_data)
-
-            # we may need to check the correctness of request
-            # so we put request in MyServerRequestHandler
             whole_request = splited_commands[0].split(' ')
 
             if len(whole_request) > 0:
+
                 new_request.method = whole_request[0]
                 new_request.url = whole_request[1]
-            else:
-                # Error: invalid method might be found here
-                pass
 
-            server_host = self.server.server_address
-            server_ip = server_host[0]
-            server_port = str(server_host[1])
-            server_addr = server_ip + ":" +server_port
+                if not new_request.method_is_valid():
+                    status_code = 405
+                    open_file = False
+                    content_type = "none"
 
-            if not new_request.url_is_valid():
-                # might report some errors here
-                pass
+            if open_file:
+                open_result, file, file_name = openRequestedFile(new_request.url)
 
-            status_code = 0
-            content_type = "void of magic"
-            path = os.getcwd()
+                status_code = checkErrorsOfOpenedFile(status_code, open_result, file, file_name)
+                status_code = checkPermissionOfRequestedFile(status_code, open_result, file, file_name)
+                if status_code == 200 and file_name != None:
+                    type_of_file = MT.guess_type(file_name, False)[0]
 
-            open_result, file = openRequestedFile(new_request.url, path)
+                #type_of_file = MT.guess_type(file_name, False)[0]
 
-            if open_result != GOODFILE:
-                status_code = 0
-            else:
-                status_code = 200
-            # might check some more errors of url here
-
-            # next we figure out what to send
-            # assume that url is correct
             new_response = MyServerResponse()
             new_response.set_status_response(status_code)
-            new_response.response_header["content_type"] = content_type
-            header = new_response.generate_header()
-            # get file here
-            # finish generation
-            # new we send it!
-            # send header here
-            self.request.sendall(header.encode("utf-8"))
+            if open_result == GOODFILE and type_of_file != None:
+                new_response.response_header["content_type"] = "Content-Type: "
+                new_response.response_header["content_type"] += type_of_file
+            new_response.send_header(conn)
+            self.request.sendall(b"\r\n")
+
             # then open file/directory and send it
             if file:
-                for line in file:
-                    self.request.sendall(line)
+                self.request.sendfile(file)
+                #pass
+            self.request.sendall(b"\r\n")
+            #conn.sendall(END_OF_LINE_RESPONSE.encode("utf-8"))
+        self.request.close()
 
 
-def openRequestedFile(client_request_url, path_on_server):
+def openRequestedFile(client_request_url):
 
     cru = client_request_url
 
@@ -196,15 +171,55 @@ def openRequestedFile(client_request_url, path_on_server):
         cru += "index.html"
 
     complete_path = DIRECTORY_TO_SERVE + cru
-
     try:
         result = open(complete_path, 'rb')
-        return GOODFILE, result
+        content_type = cru.split(".")
+        return GOODFILE, result, cru
     except IsADirectoryError as e:
-        return ISADIRECTORY, None
+        return ISADIRECTORY, None, None
     except FileNotFoundError as n:
-        return NOFILE, None
+        return NOFILE, None, None
 
+def checkErrorsOfOpenedFile(status_code,open_result, file, file_name):
+    if open_result == GOODFILE:
+        status_code = 200
+        type_of_file = MT.guess_type(file_name, False)[0]
+    elif open_result == ISADIRECTORY:
+        status_code = 301
+    elif open_result == NOFILE:
+        status_code = 404
+
+    #print("!",os.path.abspath(file.name))
+    #print("!",os.getcwd()[1])
+    """
+    abs_path_of_serving_dir = os.getcwd()
+    length_of_serving_dir = len(path_of_serving_dir)
+    abs_path_of_request = os.path.abspath(file_name)
+    length_of_requested_object = len(abs_path_of_request)
+
+    if length_of_serving_dir > length_of_requested_object:
+        status_code = 404
+    elif abs_path_of_serving_dir[length_of_serving_dir] != abs_path_of_request[length_of_serving_dir]:
+        status_code = 404
+    """
+    return status_code
+
+def checkPermissionOfRequestedFile(status_code,open_result, file, file_name):
+
+    if file_name == None:
+        return status_code
+
+    abs_path_of_serving_dir = os.getcwd()
+    length_of_serving_dir = len(abs_path_of_serving_dir)
+    abs_path_of_request = os.path.abspath(file.name)
+    length_of_requested_object = len(abs_path_of_request)
+
+    if length_of_serving_dir > length_of_requested_object:
+        status_code = 404
+    elif abs_path_of_serving_dir != abs_path_of_request[:length_of_serving_dir]:
+        status_code = 404
+
+    return status_code
 
 
 if __name__ == "__main__":
@@ -212,8 +227,10 @@ if __name__ == "__main__":
 
     socketserver.TCPServer.allow_reuse_address = True
     # Create the server, binding to localhost on port 8080
-    server = socketserver.TCPServer((HOST, PORT), MyWebServer)
-
+    server = socketserver.TCPServer((HOST, PORT), MyWebServer) # https://stackoverflow.com/questions/15260558/python-tcpserver-address-already-in-use-but-i-close-the-server-and-i-use-allow
     # Activate the server; this will keep running until you
     # interrupt the program with Ctrl-C
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        sys.exit(0)
