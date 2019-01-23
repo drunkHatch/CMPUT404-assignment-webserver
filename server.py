@@ -35,8 +35,9 @@ import sys
 STATUS_CODE_RESPONSE = {
     0: " 0 Surprise!",
     200: " 200 OK",
+    301: " 301 Moved Permanently",
     404: " 404 Not Found",
-    405: " 405 METHOD NOT ALLOWED"
+    405: " 405 Method Not Allowed"
 }
 
 HTTP_REQUEST_METHODS = {
@@ -60,22 +61,27 @@ class MyServerResponse:
             "date_response": "Date: " + datetime.datetime.now().strftime('%A, %d %b %Y %X %Z'),
             "expires": "Expires: " + expire_time,
             "content_type": "Content-Type: " + content_type,
-            "accept_ranges": "Accept-Ranges: " + accept_ranges
+            "accept_ranges": "Accept-Ranges: " + accept_ranges,
+            "redirect_address": "Location: http://",
+            "allow_header": "ALlow: GET"
         }
 
-    def send_header(self, conn):
+    def send_header(self, conn, status_code):
         tmp = self.response_header["status_response"] + END_OF_LINE_RESPONSE
         conn.sendall(tmp.encode("utf-8"))
 
-        tmp = self.response_header["expires"] + END_OF_LINE_RESPONSE
-        conn.sendall(tmp.encode("utf-8"))
-
-        if self.response_header["content_type"] != "default":
-            tmp = self.response_header["content_type"] + END_OF_LINE_RESPONSE
+        if status_code == 200:
+            tmp = self.response_header["expires"] + END_OF_LINE_RESPONSE
             conn.sendall(tmp.encode("utf-8"))
 
-        tmp = self.response_header["accept_ranges"] + END_OF_LINE_RESPONSE
-        conn.sendall(tmp.encode("utf-8"))
+            tmp = self.response_header["content_type"] + END_OF_LINE_RESPONSE
+            conn.sendall(tmp.encode("utf-8"))
+        elif status_code == 301:
+            tmp = self.response_header["redirect_address"] + END_OF_LINE_RESPONSE
+            conn.sendall(tmp.encode("utf-8"))
+        elif status_code == 405:
+            tmp = self.response_header["allow_header"] + END_OF_LINE_RESPONSE
+            conn.sendall(tmp.encode("utf-8"))
 
     def set_status_response(self, status_code):
         self.response_header["status_response"] = PROTOCOL_RESPONSE + STATUS_CODE_RESPONSE[status_code]
@@ -100,8 +106,6 @@ class MyServerRequest:
 class MyWebServer(socketserver.BaseRequestHandler):
 
     def handle(self):
-        #print("Client address: ", self.client_address) # this is the
-        #print("Client request class: ", type(self.request)) # self.request is the conn, class socket.socket
         rest_protocol_flag = False
         standard_rest_cmd = "GET / HTTP/1.1"
 
@@ -115,6 +119,9 @@ class MyWebServer(socketserver.BaseRequestHandler):
             content_type = "void of magic"
             file_name = "none"
             type_of_file = "default"
+            open_result = -100
+            new_response = MyServerResponse()
+
 
             # recv all data
             while True:
@@ -136,33 +143,35 @@ class MyWebServer(socketserver.BaseRequestHandler):
                     status_code = 405
                     open_file = False
                     content_type = "none"
+            new_response.set_status_response(status_code)
 
             if open_file:
                 open_result, file, file_name = openRequestedFile(new_request.url)
 
                 status_code = checkErrorsOfOpenedFile(status_code, open_result, file, file_name)
                 status_code = checkPermissionOfRequestedFile(status_code, open_result, file, file_name)
+                new_response.set_status_response(status_code)
+
                 if status_code == 200 and file_name != None:
                     type_of_file = MT.guess_type(file_name, False)[0]
+                elif status_code == 301:
+                    new_response.response_header["redirect_address"] += self.server.server_address[0] + ":" + str(self.server.server_address[1]) + new_request.url + "/"
+                    pass
 
-                #type_of_file = MT.guess_type(file_name, False)[0]
-
-            new_response = MyServerResponse()
             new_response.set_status_response(status_code)
             if open_result == GOODFILE and type_of_file != None:
                 new_response.response_header["content_type"] = "Content-Type: "
                 new_response.response_header["content_type"] += type_of_file
-            new_response.send_header(conn)
+            new_response.send_header(conn, status_code)
             self.request.sendall(b"\r\n")
+
 
             # then open file/directory and send it
             if file:
                 self.request.sendfile(file)
-                #pass
-            #error_handler(conn, status_c)
-            self.request.sendall(b"\r\n")
-            #conn.sendall(END_OF_LINE_RESPONSE.encode("utf-8"))
-        self.request.close()
+            #self.request.sendall(b"\r\n")
+
+            conn.close()
 
 
 def openRequestedFile(client_request_url):
@@ -191,19 +200,6 @@ def checkErrorsOfOpenedFile(status_code,open_result, file, file_name):
     elif open_result == NOFILE:
         status_code = 404
 
-    #print("!",os.path.abspath(file.name))
-    #print("!",os.getcwd()[1])
-    """
-    abs_path_of_serving_dir = os.getcwd()
-    length_of_serving_dir = len(path_of_serving_dir)
-    abs_path_of_request = os.path.abspath(file_name)
-    length_of_requested_object = len(abs_path_of_request)
-
-    if length_of_serving_dir > length_of_requested_object:
-        status_code = 404
-    elif abs_path_of_serving_dir[length_of_serving_dir] != abs_path_of_request[length_of_serving_dir]:
-        status_code = 404
-    """
     return status_code
 
 def checkPermissionOfRequestedFile(status_code,open_result, file, file_name):
@@ -212,6 +208,7 @@ def checkPermissionOfRequestedFile(status_code,open_result, file, file_name):
         return status_code
 
     abs_path_of_serving_dir = os.getcwd()
+    abs_path_of_serving_dir += "/www/"
     length_of_serving_dir = len(abs_path_of_serving_dir)
     abs_path_of_request = os.path.abspath(file.name)
     length_of_requested_object = len(abs_path_of_request)
