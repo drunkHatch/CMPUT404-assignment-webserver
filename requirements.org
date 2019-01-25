@@ -33,7 +33,7 @@
    - [1] The webserver can serve CSS properly so that the front page
      has an orange h1 header.
    - [1] I can check out the source code via an HTTP git URL
-   - [ ] Provide a screenshot (commit and push it!) of Firefox at
+   - [1] Provide a screenshot (commit and push it!) of Firefox at
      http://127.0.0.1:8080/ and http://127.0.0.1:8080/deep/
    - [1] Return a status code of "405 Method Not Allowed" for any method you cannot handle (POST/PUT/DELETE)
 
