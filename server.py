@@ -32,6 +32,7 @@ import sys
 
 # try: curl -v -X GET http://127.0.0.1:8080/
 
+# status codes could be handled
 STATUS_CODE_RESPONSE = {
     0: " 0 Surprise!",
     200: " 200 OK",
@@ -40,10 +41,12 @@ STATUS_CODE_RESPONSE = {
     405: " 405 Method Not Allowed"
 }
 
+# methods could be handled
 HTTP_REQUEST_METHODS = {
     "GET": 1,
 }
 
+# some hard coded text
 END_OF_LINE_RESPONSE = "\r\n"
 PROTOCOL_RESPONSE = "HTTP/1.1"
 DIRECTORY_TO_SERVE = "www"
@@ -53,12 +56,15 @@ GOODFILE = 1
 ISADIRECTORY = 2
 NOFILE = 3
 
+# response generate class
 class MyServerResponse:
 
-    def __init__(self, status=0, expire_time="-1", content_type="default", accept_ranges="none"):
+    def __init__(self, status=0, expire_time="-1", content_type="default", \
+    accept_ranges="none"):
         self.response_header = {
             "status_response": PROTOCOL_RESPONSE + STATUS_CODE_RESPONSE[status],
-            "date_response": "Date: " + datetime.datetime.now().strftime('%A, %d %b %Y %X %Z'),
+            "date_response": "Date: " + datetime.datetime.now().\
+                                                strftime('%A, %d %b %Y %X %Z'),
             "expires": "Expires: " + expire_time,
             "content_type": "Content-Type: " + content_type,
             "accept_ranges": "Accept-Ranges: " + accept_ranges,
@@ -66,6 +72,7 @@ class MyServerResponse:
             "allow_header": "ALlow: GET"
         }
 
+    # send header via various status_code
     def send_header(self, conn, status_code):
         tmp = self.response_header["status_response"] + END_OF_LINE_RESPONSE
         conn.sendall(tmp.encode("utf-8"))
@@ -77,16 +84,18 @@ class MyServerResponse:
             tmp = self.response_header["content_type"] + END_OF_LINE_RESPONSE
             conn.sendall(tmp.encode("utf-8"))
         elif status_code == 301:
-            tmp = self.response_header["redirect_address"] + END_OF_LINE_RESPONSE
+            tmp = self.response_header["redirect_address"] + \
+                                                    END_OF_LINE_RESPONSE
             conn.sendall(tmp.encode("utf-8"))
         elif status_code == 405:
             tmp = self.response_header["allow_header"] + END_OF_LINE_RESPONSE
             conn.sendall(tmp.encode("utf-8"))
 
     def set_status_response(self, status_code):
-        self.response_header["status_response"] = PROTOCOL_RESPONSE + STATUS_CODE_RESPONSE[status_code]
+        self.response_header["status_response"] = \
+                    PROTOCOL_RESPONSE + STATUS_CODE_RESPONSE[status_code]
 
-
+# request for storing received request attributes
 class MyServerRequest:
 
     def __init__(self):
@@ -108,10 +117,11 @@ class MyWebServer(socketserver.BaseRequestHandler):
     def handle(self):
         rest_protocol_flag = False
         standard_rest_cmd = "GET / HTTP/1.1"
-
+        # init the socket
         self.request.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         full_data = b""
         with self.request as conn:
+            # declaration here
             new_request = MyServerRequest()
             status_code = 0
             open_file = True
@@ -121,7 +131,6 @@ class MyWebServer(socketserver.BaseRequestHandler):
             type_of_file = "default"
             open_result = -100
             new_response = MyServerResponse()
-
 
             # recv all data
             while True:
@@ -133,30 +142,37 @@ class MyWebServer(socketserver.BaseRequestHandler):
             str_full_data = full_data.decode("utf-8")
             splited_commands = re.split('[\r|\n]+', str_full_data)
             whole_request = splited_commands[0].split(' ')
-
+            # if we can find request from recved data
             if len(whole_request) > 0:
+                new_request.method = whole_request[0] # try to pick methods
+                new_request.url = whole_request[1] # try to pick url
 
-                new_request.method = whole_request[0]
-                new_request.url = whole_request[1]
-
+                # if method we get could not be handled
                 if not new_request.method_is_valid():
                     status_code = 405
                     open_file = False
                     content_type = "none"
             new_response.set_status_response(status_code)
 
+            # if no errors occured and then try to open requested url
             if open_file:
                 open_result, file, file_name = openRequestedFile(new_request.url)
 
-                status_code = checkErrorsOfOpenedFile(status_code, open_result, file, file_name)
-                status_code = checkPermissionOfRequestedFile(status_code, open_result, file, file_name)
+                # try opening requested file, and return corresponding status_code
+                status_code = checkErrorsOfOpenedFile\
+                                    (status_code, open_result, file, file_name)
+                # SECURITY: check permission of opened file
+                status_code = checkPermissionOfRequestedFile\
+                                (status_code, open_result, file, file_name)
                 new_response.set_status_response(status_code)
 
                 if status_code == 200 and file_name != None:
                     type_of_file = MT.guess_type(file_name, False)[0]
                 elif status_code == 301:
-                    new_response.response_header["redirect_address"] += self.server.server_address[0] + ":" + str(self.server.server_address[1]) + new_request.url + "/"
-                    pass
+                    new_response.response_header["redirect_address"] += \
+                            self.server.server_address[0] + ":" + \
+                            str(self.server.server_address[1]) + \
+                            new_request.url + "/"
 
             new_response.set_status_response(status_code)
             if open_result == GOODFILE and type_of_file != None:
@@ -173,7 +189,8 @@ class MyWebServer(socketserver.BaseRequestHandler):
 
             conn.close()
 
-
+# argument: requested url
+# return value: open file result, opened file object, local path
 def openRequestedFile(client_request_url):
 
     cru = client_request_url
@@ -191,6 +208,7 @@ def openRequestedFile(client_request_url):
     except FileNotFoundError as n:
         return NOFILE, None, None
 
+# check type and error of opened file
 def checkErrorsOfOpenedFile(status_code,open_result, file, file_name):
     if open_result == GOODFILE:
         status_code = 200
@@ -202,6 +220,7 @@ def checkErrorsOfOpenedFile(status_code,open_result, file, file_name):
 
     return status_code
 
+# SECURITY: check the permission of opened file
 def checkPermissionOfRequestedFile(status_code,open_result, file, file_name):
 
     if file_name == None:
@@ -226,10 +245,11 @@ if __name__ == "__main__":
 
     socketserver.TCPServer.allow_reuse_address = True
     # Create the server, binding to localhost on port 8080
-    server = socketserver.TCPServer((HOST, PORT), MyWebServer) # https://stackoverflow.com/questions/15260558/python-tcpserver-address-already-in-use-but-i-close-the-server-and-i-use-allow
+    server = socketserver.TCPServer((HOST, PORT), MyWebServer)
+    # https://stackoverflow.com/questions/15260558/python-tcpserver-address-already-in-use-but-i-close-the-server-and-i-use-allow
     # Activate the server; this will keep running until you
     # interrupt the program with Ctrl-C
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
+    except KeyboardInterrupt: # exit if ctrl+C
         sys.exit(0)
