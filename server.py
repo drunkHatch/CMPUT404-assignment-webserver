@@ -139,6 +139,9 @@ class MyWebServer(socketserver.BaseRequestHandler):
                 full_data += data
                 if b"\r\n" in data:
                     break
+            if b"utf" in full_data:
+                print(full_data)
+                pass
             str_full_data = full_data.decode("utf-8")
             splited_commands = re.split('[\r|\n]+', str_full_data)
             whole_request = splited_commands[0].split(' ')
